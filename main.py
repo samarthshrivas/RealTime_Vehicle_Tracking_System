@@ -7,10 +7,12 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 import time
+
 try:
     import torch
 except Exception:
     torch = None
+
 try:
     import pynvml
     pynvml.nvmlInit()
@@ -18,32 +20,35 @@ try:
 except Exception:
     _pynvml_available = False
 
+# -------------------------
 # Initialize FastAPI
+# -------------------------
 app = FastAPI(title="YOLOv11 Vehicle Detection API")
 
-# Allow CORS (Cross-Origin Resource Sharing) so React can connect
+# Allow CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- LOAD MODEL ---
-# Ensure you have the model weights. YOLO11 will download 'yolo11n.pt' automatically if missing.
-# You can switch to 'yolo11s.pt' or 'yolo11m.pt' for better accuracy but slower speed.
+# -------------------------
+# Load YOLO model with BoT-SORT
+# -------------------------
 print("Loading YOLO11 Model...")
-model = YOLO("yolo11n.pt") 
-print("Model Loaded Successfully.")
+model = YOLO("yolo11n.pt")
+print("Model Loaded Successfully (BoT-SORT enabled).")
 
-# Helper: Decode Base64 Image to OpenCV format
+
+# -------------------------
+# Helper: Base64 → CV2 image
+# -------------------------
 def base64_to_cv2(base64_string):
     try:
-        # Remove header if present (e.g., "data:image/jpeg;base64,")
         if "," in base64_string:
             base64_string = base64_string.split(",")[1]
-        
         img_data = base64.b64decode(base64_string)
         nparr = np.frombuffer(img_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -52,28 +57,32 @@ def base64_to_cv2(base64_string):
         print(f"Error decoding image: {e}")
         return None
 
+
 @app.get("/")
 def home():
-    return {"status": "running", "model": "YOLOv11"}
+    return {"status": "running", "model": "YOLOv11 + BoT-SORT"}
 
+
+# -------------------------
+# GPU System Stats
+# -------------------------
 @app.get("/system/stats")
 def system_stats():
     gpu_available = False
     gpu_util = None
     gpu_mem_total = None
     gpu_mem_used = None
-    device = "cpu"
+    device = "cuda"
 
     try:
         if torch is not None and torch.cuda.is_available():
             gpu_available = True
             device = "cuda"
-            # Memory usage via torch
             mem_alloc = torch.cuda.memory_allocated(0)
             mem_total = torch.cuda.get_device_properties(0).total_memory
             gpu_mem_total = int(mem_total)
             gpu_mem_used = int(mem_alloc)
-            # Utilization via NVML if available
+
             if _pynvml_available:
                 handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                 util = pynvml.nvmlDeviceGetUtilizationRates(handle)
@@ -97,75 +106,102 @@ def system_stats():
         "timestamp": time.time(),
     }
 
+
+# -------------------------
+# Websocket Video Detection (BoT-SORT)
+# -------------------------
 @app.websocket("/ws/detect")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("Client connected")
-    
+
     try:
         while True:
-            # 1. Receive frame data from Frontend (Base64 string)
+
+            # 1. Receive frame in Base64
             data = await websocket.receive_text()
-            
-            # 2. Decode image
             frame = base64_to_cv2(data)
-            
             if frame is None:
                 continue
 
-            # 3. Run YOLO11 Inference
-            # stream=True is efficient for videos. verbose=False quiets console output.
-            results = model(frame, stream=True, verbose=False)
+            # 2. Run YOLO + BoT-SORT tracking
+            results = model.track(
+                frame,
+                persist=True,
+                tracker="botsort.yaml",    # << Using BoT-SORT
+                stream=True,
+                verbose=False
+            )
 
-            detections = []
-            class_counts = {}
+            detections_output = []
+            class_counts = {"cars": 0, "trucks": 0, "buses": 0, "bikes": 0}
 
-            # 4. Process Results
+            vehicle_classes = ["car", "motorcycle", "bus", "truck"]
+
+            # 3. Extract tracked detections
             for r in results:
                 boxes = r.boxes
-                for box in boxes:
-                    # Bounding Box Coordinates (x, y, w, h)
-                    x, y, w, h = box.xywh[0].tolist()
-                    
-                    # Confidence
-                    conf = float(box.conf[0])
-                    
-                    # Class Name
-                    cls_id = int(box.cls[0])
-                    cls_name = model.names[cls_id]
 
-                    # Filter for vehicles only (COCO dataset IDs)
-                    # 2: car, 3: motorcycle, 5: bus, 7: truck
-                    vehicle_classes = ['car', 'motorcycle', 'bus', 'truck']
-                    
-                    if cls_name in vehicle_classes:
-                        # Add to list
-                        detections.append({
-                            "id": f"{cls_name}_{len(detections)}", # Simple ID generation
-                            "class": cls_name if cls_name != 'motorcycle' else 'motorbike', # Match frontend naming
-                            "confidence": conf,
-                            "x": x - (w / 2), # Convert center-x to top-left x
-                            "y": y - (h / 2), # Convert center-y to top-left y
-                            "w": w,
-                            "h": h
-                        })
+                if boxes is None or len(boxes) == 0:
+                    continue
 
-                        # Count stats
-                        class_key = cls_name + 's' if cls_name != 'bus' else 'buses'
-                        if cls_name == 'motorcycle': class_key = 'bikes'
-                        
-                        class_counts[class_key] = class_counts.get(class_key, 0) + 1
+                xyxy = boxes.xyxy.cpu().numpy()
+                conf = boxes.conf.cpu().numpy()
+                cls = boxes.cls.cpu().numpy().astype(int)
 
-            # 5. Send JSON response back to React
-            response = {
-                "detections": detections,
+                # BoT-SORT IDs
+                track_ids = None
+                if boxes.id is not None:
+                    track_ids = boxes.id.cpu().numpy().astype(int)
+                else:
+                    continue  # Without ID, skip (shouldn't happen with BoT-SORT)
+
+                for box, c, class_id, tid in zip(xyxy, conf, cls, track_ids):
+
+                    class_name = model.names[class_id]
+
+                    if class_name not in vehicle_classes:
+                        continue
+
+                    # Normalize name for frontend
+                    if class_name == "motorcycle":
+                        class_name = "motorbike"
+
+                    x1, y1, x2, y2 = box
+                    w = x2 - x1
+                    h = y2 - y1
+
+                    # update counts
+                    if class_name == "car":
+                        class_counts["cars"] += 1
+                    elif class_name == "truck":
+                        class_counts["trucks"] += 1
+                    elif class_name == "bus":
+                        class_counts["buses"] += 1
+                    elif class_name == "motorbike":
+                        class_counts["bikes"] += 1
+
+                    detections_output.append({
+                        "id": f"{class_name}_{tid}",   # BoT-SORT track ID
+                        "class": class_name,
+                        "confidence": float(c),
+                        "x": float(x1),
+                        "y": float(y1),
+                        "w": float(w),
+                        "h": float(h)
+                    })
+
+            # 4. Send JSON result to frontend
+            await websocket.send_json({
+                "detections": detections_output,
                 "stats": class_counts
-            }
-            
-            await websocket.send_json(response)
+            })
 
     except WebSocketDisconnect:
         print("Client disconnected")
     except Exception as e:
         print(f"Error: {e}")
-        await websocket.close()
+        try:
+            await websocket.close()
+        except:
+            pass
