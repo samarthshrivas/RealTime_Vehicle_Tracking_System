@@ -1,4 +1,4 @@
-# Realtime Vehicle Tracking System
+# RealTime Vehicle Tracking System
 
 ![Project Banner](public/og-image.png)
 
