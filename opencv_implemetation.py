@@ -3,7 +3,7 @@ import torch
 from ultralytics import YOLO
 
 # ------------------ CONFIG ------------------
-MODEL_PATH = "yolo11n.pt"   # your YOLO11 .pt model
+MODEL_PATH = "yolo11n_finetuned.pt"   # your YOLO11 .pt model
 VIDEO = 0                   # webcam or path to video
 CONF_THRESH = 0.50
 # --------------------------------------------
@@ -17,7 +17,7 @@ model = YOLO(MODEL_PATH)
 model.to(device)
 
 # Start video capture
-cap = cv2.VideoCapture("C:\\Users\\Samarth\\Downloads\\stock-footage-makassar-pedestrian-bridge-indonesia-june-vehicles-passing-by-recorded-from-the-top-of.mp4")
+cap = cv2.VideoCapture("C:\\Users\\Samarth\\Downloads\\stock-footage-mysore-karnataka-india-a-bustling-street-scene-in-the-center-of-the-south-indian.mp4")
 
 while True:
     ret, frame = cap.read()

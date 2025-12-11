@@ -25,7 +25,7 @@ app.add_middleware(
 # Load YOLO model
 # -------------------------
 print("Loading YOLO11 Model...")
-model = YOLO("yolo11n.pt")
+model = YOLO("yolo11n_finetuned.pt")
 # Force GPU if available
 if torch.cuda.is_available():
     model.to("cuda")
