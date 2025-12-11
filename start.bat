@@ -15,7 +15,7 @@ if exist "%ROOT%venv\Scripts\activate.bat" (
 )
 
 echo [INFO] Starting backend (uvicorn) on http://localhost:8000 ...
-start "YOLO API" cmd /c uvicorn main:app --host 0.0.0.0 --port 8000
+start "YOLO API" cmd /c uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 REM Small wait to let backend boot
 timeout /t 2 >nul
