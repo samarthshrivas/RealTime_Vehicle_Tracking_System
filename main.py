@@ -89,8 +89,8 @@ async def websocket_endpoint(websocket: WebSocket):
             )
 
             detections_output = []
-            class_counts = {"cars": 0, "trucks": 0, "buses": 0, "bikes": 0}
-            vehicle_classes = ["car", "motorcycle", "bus", "truck"]
+            class_counts = {"cars": 0, "trucks": 0, "buses": 0, "bikes": 0, "autorickshaws": 0, "scooters": 0, "taxis": 0, "ambulances": 0 }
+            vehicle_classes = ["car", "motorcycle", "bus", "truck", "autorickshaw", "scooter", "taxi", "ambulance"]
 
             for r in results:
                 boxes = r.boxes
@@ -121,6 +121,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     elif class_name == "truck": class_counts["trucks"] += 1
                     elif class_name == "bus": class_counts["buses"] += 1
                     elif class_name == "motorbike": class_counts["bikes"] += 1
+                    elif class_name == "autorickshaw": class_counts["autorickshaws"] += 1
+                    elif class_name == "scooter": class_counts["scooters"] += 1
+                    elif class_name == "taxi": class_counts["taxis"] += 1
+                    elif class_name == "ambulance": class_counts["ambulances"] += 1
 
                     x1, y1, x2, y2 = box
                     detections_output.append({
